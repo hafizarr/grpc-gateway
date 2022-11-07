@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package model;
+
+option go_package = "github.com/hafizarr/grpc-gateway/models";
+
+import "github.com/hafizarr/grpc-gateway/common/models/google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+
+service TodoService {
+  rpc GetAll(google.protobuf.Empty) returns (UserList) {
+    option (google.api.http) = {
+      get : "/todos",
+    };
+  }
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  string password = 3;
+}
+
+message UserList {
+  repeated User list = 1;
+}
+
+service Users {
+  rpc List(google.protobuf.Empty) returns (UserList) {}
+}
