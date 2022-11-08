@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package users;
+
+option go_package = "github.com/hafizarr/grpc-gateway/proto/users";
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+
+service UsersService {
+  rpc GetAll(google.protobuf.Empty) returns (GetAllResponse) {
+    option (google.api.http) = {
+      get : "/v1/users",
+    };
+  }
+
+  rpc GetByID(GetByIDRequest) returns (GetByIDResponse) {
+    option (google.api.http) = {
+      get : "/v1/users/{id}",
+    };
+  }
+
+  rpc Create(Users) returns (MutationResponse) {
+    option (google.api.http) = {
+      post : "/v1/users",
+      body : "*",
+    };
+  }
+
+  rpc Update(UpdateRequest) returns (MutationResponse) {
+    option (google.api.http) = {
+      put : "/v1/users/{id}",
+      body : "*",
+    };
+  }
+
+  rpc Delete(DeleteRequest) returns (MutationResponse) {
+    option (google.api.http) = {
+      delete : "/v1/users/{id}",
+    };
+  }
+}
+
+message Users {
+  int64 id = 1;
+  string name = 2;
+  string password = 3;
+}
+
+message GetAllResponse {
+  repeated Users data = 1;
+}
+
+message GetAllRequest {
+  repeated Users data = 1;
+}
+
+message GetByIDRequest {
+    int64 id = 1;
+}
+
+message GetByIDResponse {
+  Users data = 1;
+}
+
+message MutationResponse {
+  string success = 1;
+}
+
+message UpdateRequest {
+    int64 id = 1;
+  string name = 2;
+  string password = 3;
+}
+
+message DeleteRequest {
+    int64 id = 1;
+}

@@ -2,70 +2,102 @@ package main
 
 import (
 	"context"
-	"log"
+	"errors"
+	"flag"
+	"fmt"
 	"net"
 	"net/http"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/hafizarr/grpc-gateway/config"
+	"github.com/hafizarr/grpc-gateway/proto/helloworld"
+	"github.com/hafizarr/grpc-gateway/proto/users"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-
-	helloworldpb "github.com/hafizarr/grpc-gateway/proto/helloworld"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-type server struct {
-	helloworldpb.UnimplementedGreeterServer
+type GreeterServer struct {
+	helloworld.GreeterServer
 }
 
-func NewServer() *server {
-	return &server{}
+type UserServer struct {
+	users.UnimplementedUsersServiceServer
 }
 
-func (s *server) SayHello(ctx context.Context, in *helloworldpb.HelloRequest) (*helloworldpb.HelloReply, error) {
-	return &helloworldpb.HelloReply{Message: in.Name + " world"}, nil
-}
+var Users = make(map[int64]*users.Users)
 
 func main() {
-	// Create a listener on TCP port
-	lis, err := net.Listen("tcp", ":8080")
+	srv := grpc.NewServer()
+	userSrv := new(UserServer)
+	users.RegisterUsersServiceServer(srv, userSrv)
+
+	log.Println("Starting User Server at ", config.SERVICE_USERS_PORT)
+
+	listener, err := net.Listen("tcp", config.SERVICE_USERS_PORT)
 	if err != nil {
-		log.Fatalln("Failed to listen:", err)
+		log.Fatalf("could not listen. Err: %+v\n", err)
 	}
 
-	// Create a gRPC server object
-	s := grpc.NewServer()
-	// Attach the Greeter service to the server
-	helloworldpb.RegisterGreeterServer(s, &server{})
-	// Serve gRPC server
-	log.Println("Serving gRPC on 0.0.0.0:8080")
+	// setup http proxy
 	go func() {
-		log.Fatalln(s.Serve(lis))
+		mux := runtime.NewServeMux()
+		opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+		grpcServerEndpoint := flag.String("grpc-server-endpoint", "localhost"+config.SERVICE_USERS_PORT, "gRPC server endpoint")
+		_ = users.RegisterUsersServiceHandlerFromEndpoint(context.Background(), mux, *grpcServerEndpoint, opts)
+		log.Println("Starting User Server HTTP at 9001 ")
+		http.ListenAndServe(":9001", mux)
 	}()
 
-	// Create a client connection to the gRPC server we just started
-	// This is where the gRPC-Gateway proxies the requests
-	conn, err := grpc.DialContext(
-		context.Background(),
-		"0.0.0.0:8080",
-		grpc.WithBlock(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		log.Fatalln("Failed to dial server:", err)
-	}
+	log.Fatalln(srv.Serve(listener))
+}
 
-	gwmux := runtime.NewServeMux()
-	// Register Greeter
-	err = helloworldpb.RegisterGreeterHandler(context.Background(), gwmux, conn)
-	if err != nil {
-		log.Fatalln("Failed to register gateway:", err)
-	}
+func (s *GreeterServer) SayHello(ctx context.Context, in *helloworld.HelloRequest) (*helloworld.HelloReply, error) {
+	return &helloworld.HelloReply{Message: in.Name + " world"}, nil
+}
 
-	gwServer := &http.Server{
-		Addr:    ":8090",
-		Handler: gwmux,
+func (t *UserServer) GetAll(ctx context.Context, req *emptypb.Empty) (*users.GetAllResponse, error) {
+	var listUsers []*users.Users
+	for _, v := range Users {
+		listUsers = append(listUsers, &users.Users{
+			Id:       v.GetId(),
+			Name:     v.GetName(),
+			Password: v.GetPassword(),
+		})
 	}
+	return &users.GetAllResponse{Data: listUsers}, nil
+}
 
-	log.Println("Serving gRPC-Gateway on http://0.0.0.0:8090")
-	log.Fatalln(gwServer.ListenAndServe())
+func (t *UserServer) GetByID(ctx context.Context, req *users.GetByIDRequest) (*users.GetByIDResponse, error) {
+	todo, ok := Users[req.GetId()]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return &users.GetByIDResponse{Data: todo}, nil
+}
+
+func (t *UserServer) Create(ctx context.Context, req *users.Users) (*users.MutationResponse, error) {
+	Users[req.GetId()] = &users.Users{
+		Id:       req.GetId(),
+		Name:     req.GetName(),
+		Password: req.GetPassword(),
+	}
+	msg := fmt.Sprintf("%d successfully saved", req.GetId())
+	return &users.MutationResponse{Success: msg}, nil
+}
+
+func (t *UserServer) Update(ctx context.Context, req *users.UpdateRequest) (*users.MutationResponse, error) {
+	Users[req.GetId()] = &users.Users{
+		Name:     req.GetName(),
+		Password: req.GetPassword(),
+	}
+	msg := fmt.Sprintf("%d successfully updated", req.GetId())
+	return &users.MutationResponse{Success: msg}, nil
+}
+
+func (t *UserServer) Delete(ctx context.Context, req *users.DeleteRequest) (*users.MutationResponse, error) {
+	delete(Users, req.GetId())
+	msg := fmt.Sprintf("%d successfully deleted", req.GetId())
+	return &users.MutationResponse{Success: msg}, nil
 }
