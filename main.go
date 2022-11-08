@@ -2,57 +2,70 @@ package main
 
 import (
 	"context"
-	"flag"
+	"log"
 	"net"
 	"net/http"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/hafizarr/grpc-gateway/common/config"
-	"github.com/hafizarr/grpc-gateway/common/models"
-	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/types/known/emptypb"
+
+	helloworldpb "github.com/hafizarr/grpc-gateway/proto/helloworld"
 )
 
-type TodoServer struct {
-	models.UnimplementedTodoServiceServer
+type server struct {
+	helloworldpb.UnimplementedGreeterServer
 }
 
-var Todos = make(map[string]*models.Todo)
+func NewServer() *server {
+	return &server{}
+}
+
+func (s *server) SayHello(ctx context.Context, in *helloworldpb.HelloRequest) (*helloworldpb.HelloReply, error) {
+	return &helloworldpb.HelloReply{Message: in.Name + " world"}, nil
+}
 
 func main() {
-	srv := grpc.NewServer()
-	userSrv := new(TodoServer)
-	models.RegisterTodoServiceServer(srv, userSrv)
-
-	log.Println("Starting Todo Server at ", config.SERVICE_USERS_PORT)
-
-	listener, err := net.Listen("tcp", config.SERVICE_USERS_PORT)
+	// Create a listener on TCP port
+	lis, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		log.Fatalf("could not listen. Err: %+v\n", err)
+		log.Fatalln("Failed to listen:", err)
 	}
 
-	// setup http proxy
+	// Create a gRPC server object
+	s := grpc.NewServer()
+	// Attach the Greeter service to the server
+	helloworldpb.RegisterGreeterServer(s, &server{})
+	// Serve gRPC server
+	log.Println("Serving gRPC on 0.0.0.0:8080")
 	go func() {
-		mux := runtime.NewServeMux()
-		opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-		grpcServerEndpoint := flag.String("grpc-server-endpoint", "localhost"+config.SERVICE_USERS_PORT, "gRPC server endpoint")
-		_ = models.RegisterTodoServiceHandlerFromEndpoint(context.Background(), mux, *grpcServerEndpoint, opts)
-		log.Println("Starting Todo Server HTTP at 9001 ")
-		http.ListenAndServe(":9001", mux)
+		log.Fatalln(s.Serve(lis))
 	}()
 
-	log.Fatalln(srv.Serve(listener))
-}
-
-func (t *TodoServer) GetAll(ctx context.Context, req *emptypb.Empty) (*models.GetAllResponse, error) {
-	var todos []*models.Todo
-	for _, v := range Todos {
-		todos = append(todos, &models.Todo{
-			Id:   v.GetId(),
-			Name: v.GetName(),
-		})
+	// Create a client connection to the gRPC server we just started
+	// This is where the gRPC-Gateway proxies the requests
+	conn, err := grpc.DialContext(
+		context.Background(),
+		"0.0.0.0:8080",
+		grpc.WithBlock(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatalln("Failed to dial server:", err)
 	}
-	return &models.GetAllResponse{Data: todos}, nil
+
+	gwmux := runtime.NewServeMux()
+	// Register Greeter
+	err = helloworldpb.RegisterGreeterHandler(context.Background(), gwmux, conn)
+	if err != nil {
+		log.Fatalln("Failed to register gateway:", err)
+	}
+
+	gwServer := &http.Server{
+		Addr:    ":8090",
+		Handler: gwmux,
+	}
+
+	log.Println("Serving gRPC-Gateway on http://0.0.0.0:8090")
+	log.Fatalln(gwServer.ListenAndServe())
 }
